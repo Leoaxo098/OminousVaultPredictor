@@ -353,11 +353,11 @@ public final class VaultPredictorGui extends JFrame {
                 long skip = (useRec ? off : 0L);
                 for (long i = 0; i < skip; i++) OminousVaultPredictor.simulateVault(rng);
                 StringBuilder sb = new StringBuilder();
-                sb.append("Using seed ").append(seed).append(useRec ? (" + recovered offset " + off) : " (offset 0)").append(".\\n");
+                sb.append("Using seed ").append(seed).append(useRec ? (" + recovered offset " + off) : " (offset 0)").append("\n");
                 if (!useRec && off == null && !vaultModel.isEmpty()) {
-                    sb.append("NOTE: observations exist but were never recovered - results are for offset 0!\\n");
+                    sb.append("NOTE: observations exist but were never recovered - results are for offset 0!\n");
                 }
-                sb.append("Searching next ").append(cap).append(" vaults for \"").append(token).append("\"...\\n\\n");
+                sb.append("Simulating the next ").append(cap).append(" ominous vaults you open, looking for \"").append(token).append("\"...\n\n");
                 OminousVaultPredictor.LootResult hit = null;
                 int hitIdx = -1;
                 List<String> preview = new ArrayList<>();
@@ -374,17 +374,26 @@ public final class VaultPredictorGui extends JFrame {
                     }
                     if (hit != null && preview.size() >= 12) break;
                 }
-                for (String line : preview) sb.append(line).append("\\n");
-                sb.append("\\n");
+                // Verdict FIRST so the answer is visible without scrolling through the loot list.
                 if (hit == null) {
                     double pApprox = token.startsWith("ominous_bottle") ? 0 : approxChanceForToken(token);
-                    sb.append("No ").append(token).append(" appeared within ").append(cap).append(" vaults.");
-                    if (pApprox > 0) sb.append(String.format(" (chance per vault ~%.2f%% => keep going)", pApprox * 100));
-                    sb.append("\\n");
+                    sb.append("NO ").append(token).append(" appeared within the next ").append(cap).append(" vaults.");
+                    if (pApprox > 0) sb.append(String.format(" (chance per vault ~%.2f%% => raise the cap and retry)", pApprox * 100));
+                    sb.append("\n");
                 } else {
-                    sb.append(String.format(">>> OPEN VAULT #%.0f IN LINE: it contains your %s! <<<%n", (double) hitIdx, token));
-                    sb.append("Full contents of that vault: ").append(String.join(" | ", hit.items())).append("\\n");
+                    String bar = "=".repeat(60);
+                    sb.append(bar).append("\n");
+                    sb.append(String.format(">>> YOUR %s IS IN UPCOMING VAULT #%d <<<\n", token.toUpperCase(), hitIdx));
+                    if (hitIdx == 1) {
+                        sb.append("It is the VERY NEXT ominous vault you open.\n");
+                    } else {
+                        sb.append(String.format("Open %d more ominous vaults first - vault #%d (right after those) holds it.\n", hitIdx - 1, hitIdx));
+                    }
+                    sb.append("Full contents: ").append(String.join(" | ", hit.items())).append("\n");
+                    sb.append(bar).append("\n");
                 }
+                sb.append("\nLoot of the upcoming vaults in order:\n");
+                for (String line : preview) sb.append(line).append("\n");
                 return sb.toString();
             }
             @Override protected void done() {
