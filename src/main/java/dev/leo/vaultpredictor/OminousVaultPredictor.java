@@ -396,10 +396,12 @@ public final class OminousVaultPredictor {
         if (knownLoots.isEmpty()) {
             throw new IllegalArgumentException("Need at least 1 known observed vault result to recover offset");
         }
+        // ponytail: incremental replay - ONE simulated open between candidates instead of
+        // re-simulating every prior open per candidate (the old loop was O(maxSearch^2)
+        // ~= billions of sims on a miss; ceiling remains maxSearch candidates).
+        VaultRng live = rng.snapshot();
         for (int offset = 0; offset < maxSearch; offset++) {
-            VaultRng trial = rng.snapshot();
-            for (int i = 0; i < offset; i++) simulateVault(trial);
-            VaultRng probe = trial.snapshot();
+            VaultRng probe = live.snapshot();
             boolean allMatch = true;
             for (List<String> known : knownLoots) {
                 LootResult res = simulateVault(probe);
@@ -415,6 +417,7 @@ public final class OminousVaultPredictor {
             if (allMatch) {
                 return offset;
             }
+            simulateVault(live);
         }
         return -1;
     }

@@ -260,7 +260,10 @@ public final class VaultPredictorGui extends JFrame {
                                 "Common causes:\n" +
                                 "- vault entries not in the exact order you opened them\n" +
                                 "- something else (other player?) opened an ominous vault in between\n" +
-                                "- typo in an item entry (must match simulator format exactly)");
+                                "- typo in an item entry (must match simulator format exactly)\n\n" +
+                                "If these were truly your world's FIRST ominous vaults (offset 0), " +
+                                "even the very first open failed to match - the seeded-init model " +
+                                "likely diverges from your runtime (see README caveats).");
                     } else {
                         recoveredOffset = off;
                         useOffsetCheck.setEnabled(true);
