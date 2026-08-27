@@ -421,6 +421,8 @@ public final class VaultPredictorGui extends JFrame {
     /** Builds one observed-vault line from dropdowns/spinners; appends to vaultModel. */
     private final class AddObservedVaultDialog extends JDialog {
         private final DefaultListModel<String> itemModel = new DefaultListModel<>();
+        private final List<String> pendingEnchants = new ArrayList<>();
+        private final JLabel pendingLabel = new JLabel(" ");
         private final JComboBox<Template> kindCombo = new JComboBox<>();
         private final JComboBox<String> bottleLvl = new JComboBox<>(new String[]{"III", "IV", "V"});
         private final JComboBox<String> enchCombo = new JComboBox<>();
@@ -456,6 +458,17 @@ public final class VaultPredictorGui extends JFrame {
             enchCard.add(enchCombo);
             enchCard.add(new JLabel("Level:"));
             enchCard.add(new JSpinner(levelModel));
+            enchCard.add(new JSpinner(levelModel));
+            JButton moreEnch = new JButton("+ Add enchant");
+            moreEnch.addActionListener(e -> {
+                String rawSel = String.valueOf(enchCombo.getSelectedItem());
+                if (rawSel.contains("(lv ")) {
+                    pendingEnchants.add(rawSel.split(" ")[0] + " " + levelModel.getValue());
+                    pendingLabel.setText(String.join(" | ", pendingEnchants));
+                }
+            });
+            enchCard.add(moreEnch);
+            enchCard.add(pendingLabel);
 
             cardPanel.add(qtyCard, "QTY");
             cardPanel.add(bottleCard, "BOTTLE");
@@ -505,6 +518,7 @@ public final class VaultPredictorGui extends JFrame {
         }
 
         private void syncFields() {
+            pendingEnchants.clear(); pendingLabel.setText(" ");
             Template t = (Template) kindCombo.getSelectedItem();
             switch (t.kind) {
                 case STACK -> { cards.show(cardPanel, "QTY");
@@ -564,9 +578,12 @@ public final class VaultPredictorGui extends JFrame {
                         ? "ominous_bottle " + bottleLvl.getSelectedItem() : t.token;
                 case FIXED_BOOK -> s = "book[wind_burst]";
                 default -> {
+                    List<String> parts = new ArrayList<>(pendingEnchants);
                     String raw = String.valueOf(enchCombo.getSelectedItem());
-                    String name = raw.split(" ")[0];
-                    s = t.token + "[" + name + " " + levelModel.getValue() + "]";
+                    parts.add(raw.split(" ")[0] + " " + levelModel.getValue());
+                    s = t.token + "[" + String.join(",", parts) + "]";
+                    pendingEnchants.clear();
+                    pendingLabel.setText(" ");
                 }
             }
             itemModel.addElement(s);
