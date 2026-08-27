@@ -425,7 +425,7 @@ public final class VaultPredictorGui extends JFrame {
         private final JComboBox<String> bottleLvl = new JComboBox<>(new String[]{"III", "IV", "V"});
         private final JComboBox<String> enchCombo = new JComboBox<>();
         private final SpinnerNumberModel levelModel = new SpinnerNumberModel(1, 1, 5, 1);
-        private final SpinnerNumberModel qtyModel = new SpinnerNumberModel(4, 4, 10, 1);
+        private final SpinnerNumberModel qtyModel = new SpinnerNumberModel(4, 1, 64, 1);
         private final CardLayout cards = new CardLayout();
         private final JPanel cardPanel = new JPanel(cards);
 
@@ -507,7 +507,12 @@ public final class VaultPredictorGui extends JFrame {
         private void syncFields() {
             Template t = (Template) kindCombo.getSelectedItem();
             switch (t.kind) {
-                case STACK -> { cards.show(cardPanel, "QTY"); qtyModel.setMinimum(t.minQty); qtyModel.setMaximum(t.maxQty); }
+                case STACK -> { cards.show(cardPanel, "QTY");
+                    // ponytail: bounds 1..64 on purpose - observed loot may fall outside predicted table ranges,
+                    // and recovery MUST see that divergence rather than have it clamped away.
+                    qtyModel.setMinimum(1); qtyModel.setMaximum(64);
+                    int q = (Integer) qtyModel.getValue();
+                    if (q < 1 || q > 64) qtyModel.setValue(Math.max(1, Math.min(64, q))); }
                 case PLAIN -> cards.show(cardPanel, t.token.equals("ominous_bottle") ? "BOTTLE" : "NONE");
                 case GEAR -> { fillEnch(t.token); cards.show(cardPanel, "ENCH"); }
                 case BOOK_GROUP -> { fillEnch(t.display.contains("breach") ? "BOOK_B" : "BOOK_A"); cards.show(cardPanel, "ENCH"); }
