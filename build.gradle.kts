@@ -40,3 +40,10 @@ tasks.register<JavaExec>("runGui") {
     classpath = sourceSets["main"].runtimeClasspath
 }
 
+
+// Double-clickable jar: launch the Swing GUI (CLI stays available via gradlew run).
+tasks.jar {
+    manifest {
+        attributes("Main-Class" to "dev.leo.vaultpredictor.VaultPredictorGui")
+    }
+}
