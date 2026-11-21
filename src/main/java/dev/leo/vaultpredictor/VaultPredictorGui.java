@@ -28,7 +28,9 @@ public final class VaultPredictorGui extends JFrame {
     private static final Color TEXT = new Color(0x18332C);
     private static final Color SECONDARY = new Color(0x50685F);
 
-    private JTextField seedField = new JTextField(12);
+    private JTextField seedField = new JTextField(21);
+    private JLabel seedIndicator = new JLabel("Enter a world seed");
+    private JLabel forecastIndicator = new JLabel("Enter a seed and choose Find my loot.");
     private DefaultListModel<String> vaultModel = new DefaultListModel<>();
     private JList<String> vaultList = new JList<>(vaultModel) {
         @Override public boolean getScrollableTracksViewportWidth() { return true; }
@@ -45,6 +47,7 @@ public final class VaultPredictorGui extends JFrame {
     private JCheckBox useOffsetCheck = new JCheckBox("Use recovered position");
     private Integer recoveredOffset;
     private long recoveryRevision;
+    private long forecastRevision;
     private JSpinner forecastCapSpinner = new JSpinner(new SpinnerNumberModel(500, 10, 100000, 50));
 
     public VaultPredictorGui() {
@@ -54,16 +57,21 @@ public final class VaultPredictorGui extends JFrame {
         shell.setBorder(new EmptyBorder(12, 16, 10, 16));
         shell.setBackground(WORKSPACE);
         setContentPane(shell);
+        InputStyle.apply(seedField);
+        InputStyle.apply(((JSpinner.DefaultEditor) forecastCapSpinner.getEditor()).getTextField());
         add(buildTopPanel(), BorderLayout.NORTH);
         add(buildLeftPanel(), BorderLayout.WEST);
         add(buildRightTabs(), BorderLayout.CENTER);
         add(statusLabel, BorderLayout.SOUTH);
         setJMenuBar(buildMenu());
         seedField.getDocument().addDocumentListener(new DocumentListener() {
-            @Override public void insertUpdate(DocumentEvent e) { invalidateRecovery(); }
-            @Override public void removeUpdate(DocumentEvent e) { invalidateRecovery(); }
-            @Override public void changedUpdate(DocumentEvent e) { invalidateRecovery(); }
+            @Override public void insertUpdate(DocumentEvent e) { seedChanged(); }
+            @Override public void removeUpdate(DocumentEvent e) { seedChanged(); }
+            @Override public void changedUpdate(DocumentEvent e) { seedChanged(); }
         });
+        targetCombo.addActionListener(e -> invalidateForecast());
+        useOffsetCheck.addActionListener(e -> invalidateForecast());
+        forecastCapSpinner.addChangeListener(e -> invalidateForecast());
         setMinimumSize(new Dimension(920, 570));
         setSize(1100, 720);
         setLocationRelativeTo(null);
@@ -142,7 +150,12 @@ public final class VaultPredictorGui extends JFrame {
         JLabel seedLabel = new JLabel("World seed");
         seedLabel.setLabelFor(seedField);
         settings.add(seedLabel);
-        settings.add(seedField);
+        JPanel seedInput = new JPanel(new BorderLayout(0, 3));
+        seedInput.setOpaque(false);
+        seedIndicator.setForeground(SECONDARY);
+        seedInput.add(seedField, BorderLayout.CENTER);
+        seedInput.add(seedIndicator, BorderLayout.SOUTH);
+        settings.add(seedInput);
         JLabel targetLabel = new JLabel("Target item");
         targetLabel.setLabelFor(targetCombo);
         settings.add(targetLabel);
@@ -339,8 +352,32 @@ public final class VaultPredictorGui extends JFrame {
         recoveryRevision++;
         useOffsetCheck.setSelected(false);
         useOffsetCheck.setEnabled(false);
-        outputArea.setText("");
+        invalidateForecast();
         status("Ready.");
+    }
+
+    private void invalidateForecast() {
+        forecastRevision++;
+        outputArea.setText("");
+        forecastIndicator.setText("Choose Find my loot to see a forecast.");
+    }
+
+    private void seedChanged() {
+        invalidateRecovery();
+        String value = seedField.getText().trim();
+        if (value.isEmpty()) {
+            seedIndicator.setText("Enter a world seed");
+            seedIndicator.setForeground(SECONDARY);
+            return;
+        }
+        try {
+            OminousVaultPredictor.parseSeedString(value);
+            seedIndicator.setText("Seed accepted");
+            seedIndicator.setForeground(new Color(0x176547));
+        } catch (NumberFormatException ex) {
+            seedIndicator.setText("Enter a valid whole number or 0x hex seed");
+            seedIndicator.setForeground(new Color(0xA12525));
+        }
     }
 
     private void runRecovery() {
@@ -373,10 +410,12 @@ public final class VaultPredictorGui extends JFrame {
                     } else {
                         recoveredOffset = off;
                         recoveryRevision++;
-                        outputArea.setText("");
+                        invalidateForecast();
                         useOffsetCheck.setEnabled(true);
                         useOffsetCheck.setSelected(true);
-                        status("Recovered: " + off + " vaults were already opened before your first observation.");
+                        status("Recovered: " + off + " vaults before your first entry; "
+                                + (off + vaultModel.size()) + " opened through your last entry.");
+                        forecastIndicator.setText("Position recovered. Choose Find my loot to forecast.");
                     }
                 } catch (Exception ex) {
                     status("Recovery failed: " + ex.getMessage());
@@ -389,7 +428,11 @@ public final class VaultPredictorGui extends JFrame {
     private JTabbedPane buildRightTabs() {
         JTabbedPane tabs = new JTabbedPane();
         outputArea.setEditable(false);
-        outputArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
+        outputArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 15));
+        outputArea.setForeground(TEXT);
+        outputArea.setBorder(new EmptyBorder(14, 16, 14, 16));
+        outputArea.setLineWrap(true);
+        outputArea.setWrapStyleWord(true);
 
         JPanel forecast = new JPanel(new BorderLayout(4, 4));
         JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT));
@@ -399,13 +442,19 @@ public final class VaultPredictorGui extends JFrame {
         JButton go = VaultLootEditor.primary("Find my loot!");
         go.addActionListener(e -> runForecast());
         bar.add(go);
-        forecast.add(bar, BorderLayout.NORTH);
+        forecastIndicator.setForeground(TEXT);
+        forecastIndicator.setBorder(new EmptyBorder(6, 10, 8, 10));
+        JPanel forecastHeader = new JPanel(new BorderLayout());
+        forecastHeader.add(bar, BorderLayout.NORTH);
+        forecastHeader.add(forecastIndicator, BorderLayout.SOUTH);
+        forecast.add(forecastHeader, BorderLayout.NORTH);
         forecast.add(new JScrollPane(outputArea), BorderLayout.CENTER);
         tabs.addTab("Forecast", forecast);
 
         JTextArea stats = new JTextArea(buildStatsText());
         stats.setEditable(false);
-        stats.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
+        stats.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 15));
+        stats.setBorder(new EmptyBorder(14, 16, 14, 16));
         tabs.addTab("Odds & statistics", new JScrollPane(stats));
         return tabs;
     }
@@ -459,7 +508,10 @@ public final class VaultPredictorGui extends JFrame {
         boolean useRec = useOffsetCheck.isSelected() && off != null;
         int observedVaults = vaultModel.size();
         long revision = recoveryRevision;
+        long forecastRun = ++forecastRevision;
+        outputArea.setText("");
         status("Simulating...");
+        forecastIndicator.setText("Searching upcoming vaults...");
         SwingWorker<String, Void> w = new SwingWorker<>() {
             @Override protected String doInBackground() {
                 OminousVaultPredictor.VaultRng rng = OminousVaultPredictor.VaultRng.fromSeed(seed);
@@ -510,9 +562,16 @@ public final class VaultPredictorGui extends JFrame {
                 return sb.toString();
             }
             @Override protected void done() {
-                if (revision != recoveryRevision) return;
-                try { outputArea.setText(get()); status("Forecast complete."); }
-                catch (Exception ex) { status("Forecast failed: " + ex.getMessage()); }
+                if (revision != recoveryRevision || forecastRun != forecastRevision) return;
+                try {
+                    outputArea.setText(get());
+                    outputArea.setCaretPosition(0);
+                    forecastIndicator.setText("Forecast ready. The result and vault contents are below.");
+                    status("Forecast complete.");
+                } catch (Exception ex) {
+                    forecastIndicator.setText("Forecast failed. Check the status message.");
+                    status("Forecast failed: " + ex.getMessage());
+                }
             }
         };
         w.execute();
@@ -533,3 +592,4 @@ public final class VaultPredictorGui extends JFrame {
         SwingUtilities.invokeLater(() -> new VaultPredictorGui().setVisible(true));
     }
 }
+

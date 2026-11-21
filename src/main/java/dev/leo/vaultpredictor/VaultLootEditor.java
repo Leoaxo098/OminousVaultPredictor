@@ -43,6 +43,7 @@ final class VaultLootEditor extends JDialog {
     private final JPanel matchesPanel = new JPanel(new GridLayout(0, 2, 6, 6));
     private final JPanel quickPicks = section("Quick picks", itemButtons(QUICK_PICKS, true));
     private final JLabel resultsHeading = heading("More items", 14);
+    private final JLabel searchIndicator = caption("Type an item or enchantment name");
     private final DefaultListModel<String> loot = new DefaultListModel<>();
     private final JList<String> contents = new JList<>(loot);
     private final JPanel details = new JPanel(new BorderLayout(0, 8));
@@ -75,6 +76,8 @@ final class VaultLootEditor extends JDialog {
         root.setBackground(PAPER);
         root.setBorder(new EmptyBorder(17, 20, 16, 20));
         setContentPane(root);
+        InputStyle.apply(search);
+        InputStyle.apply(quantityInput);
         bookEnchantment.addActionListener(e -> refreshBookLevels());
         quantityInput.setColumns(5);
         quantityInput.setFocusLostBehavior(JFormattedTextField.PERSIST);
@@ -129,6 +132,7 @@ final class VaultLootEditor extends JDialog {
         searchLabel.setLabelFor(search);
         searchPanel.add(searchLabel, BorderLayout.NORTH);
         searchPanel.add(search, BorderLayout.CENTER);
+        searchPanel.add(searchIndicator, BorderLayout.SOUTH);
         panel.add(searchPanel, BorderLayout.NORTH);
         search.getDocument().addDocumentListener(new DocumentListener() {
             @Override public void insertUpdate(DocumentEvent e) { refreshPicker(); }
@@ -152,7 +156,7 @@ final class VaultLootEditor extends JDialog {
         scroll.setBorder(new EmptyBorder(0, 0, 0, 0));
         scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         panel.add(scroll, BorderLayout.CENTER);
-        panel.add(caption("Enter chooses the first search result."), BorderLayout.SOUTH);
+        panel.add(caption("Press Enter to choose the first result."), BorderLayout.SOUTH);
         return panel;
     }
 
@@ -180,6 +184,8 @@ final class VaultLootEditor extends JDialog {
         quickPicks.setVisible(query.isBlank());
         resultsHeading.setText(query.isBlank() ? "More items" : "Search results");
         matches = Arrays.stream(Item.values()).filter(item -> item.matches(query)).toList();
+        searchIndicator.setText(query.isBlank() ? "Type an item or enchantment name"
+                : matches.size() + (matches.size() == 1 ? " matching item" : " matching items"));
         matchesPanel.removeAll();
         for (Item item : matches) {
             if (!query.isBlank() || !QUICK_PICKS.contains(item)) matchesPanel.add(itemButton(item, false));
@@ -299,6 +305,7 @@ final class VaultLootEditor extends JDialog {
                     controls.add(labeled("Bottle level", bottles));
                 }
                 controls.add(labeled("Quantity", quantity));
+                feedback.setText("Enter a whole number from 1 to 64.");
                 focus = item.kind == Kind.BOTTLE ? bottles : quantityInput;
             }
             case BOOK -> {
@@ -487,3 +494,4 @@ final class VaultLootEditor extends JDialog {
         @Override public boolean getScrollableTracksViewportHeight() { return false; }
     }
 }
+
