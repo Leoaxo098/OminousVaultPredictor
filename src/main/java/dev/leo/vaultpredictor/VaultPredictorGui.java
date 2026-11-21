@@ -1,13 +1,19 @@
 package dev.leo.vaultpredictor;
 
 import javax.swing.*;
-import javax.swing.border.TitledBorder;
+import javax.swing.border.EmptyBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import javax.swing.event.ListDataEvent;
+import javax.swing.event.ListDataListener;
 import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.List;
-import java.util.regex.*;
 
 /**
  * Swing front-end for OminousVaultPredictor.
@@ -18,99 +24,48 @@ import java.util.regex.*;
  */
 public final class VaultPredictorGui extends JFrame {
 
-    // Canonical item templates shown in the row editor. The STRING formats are
-    // mirrored 1:1 from OminousVaultPredictor.simulateVault emissions; any
-    // divergence breaks offset matching. LootTableParityTest guards this via
-    // canonicalPatterns() below.
-    enum ItemKind {
-        STACK("Stackable", true),
-        PLAIN("Single item", false),
-        GEAR("Enchanted gear", false),
-        BOOK_GROUP("Enchanted book (options list)", false),
-        FIXED_BOOK("Fixed enchant book", false);
-
-        final String label;
-        final boolean hasCount;
-        ItemKind(String label, boolean hasCount) { this.label = label; this.hasCount = hasCount; }
-    }
-
-    private record Template(String token, String display, ItemKind kind,
-                            int minQty, int maxQty, int weightForStats) {}
-
-    private static final List<Template> TEMPLATES = List.of(
-            new Template("emerald", "Emerald", ItemKind.STACK, 4, 10, 5),
-            new Template("wind_charge", "Wind charge", ItemKind.STACK, 8, 12, 4),
-            new Template("tipped_arrow_slowness", "Tipped arrow (slowness)", ItemKind.STACK, 4, 12, 3),
-            new Template("diamond", "Diamond", ItemKind.STACK, 2, 3, 2),
-            new Template("ominous_bottle", "Ominous bottle", ItemKind.PLAIN, 0, 0, 1),
-            new Template("emerald_block", "Block of emerald", ItemKind.PLAIN, 0, 0, 0),
-            new Template("iron_block", "Block of iron", ItemKind.PLAIN, 0, 0, 0),
-            new Template("golden_apple", "Golden apple", ItemKind.PLAIN, 0, 0, 0),
-            new Template("diamond_block", "Block of diamond", ItemKind.PLAIN, 0, 0, 0),
-            new Template("crossbow", "Crossbow (enchanted)", ItemKind.GEAR, 0, 0, 0),
-            new Template("diamond_axe", "Diamond axe (enchanted)", ItemKind.GEAR, 0, 0, 0),
-            new Template("diamond_chestplate", "Diamond chestplate (enchanted)", ItemKind.GEAR, 0, 0, 0),
-            new Template("book", "Book (knockback/punch/smite/looting/multishot)", ItemKind.BOOK_GROUP, 0, 0, 0),
-            new Template("book", "Book (breach/density)", ItemKind.BOOK_GROUP, 0, 0, 0),
-            new Template("book", "Book (wind burst)", ItemKind.FIXED_BOOK, 0, 0, 0),
-            new Template("enchanted_golden_apple", "Enchanted golden apple", ItemKind.PLAIN, 0, 0, 0),
-            new Template("flow_armor_trim_smithing_template", "Flow armor trim", ItemKind.PLAIN, 0, 0, 0),
-            new Template("flow_banner_pattern", "Flow banner pattern", ItemKind.PLAIN, 0, 0, 0),
-            new Template("music_disc_creator", "Music disc creator", ItemKind.PLAIN, 0, 0, 0),
-            new Template("heavy_core", "Heavy core", ItemKind.PLAIN, 0, 0, 0));
-
-    /** Regexes every simulator emission must satisfy (GUI <-> sim parity). */
-    static List<Pattern> canonicalPatterns() {
-        List<Pattern> out = new ArrayList<>();
-        out.add(Pattern.compile("(emerald|wind_charge|tipped_arrow_slowness|diamond) x\\d+"));
-        out.add(Pattern.compile("ominous_bottle (III|IV|V)"));
-        for (String g : new String[]{"crossbow", "diamond_axe", "diamond_chestplate", "book"}) {
-            out.add(Pattern.compile(g + "\\[[a-z_]+ \\d+(,[a-z_]+ \\d+)*\\]"));
-        }
-        out.add(Pattern.compile("book\\[wind_burst\\]"));
-        for (String s : new String[]{"emerald_block", "iron_block", "golden_apple",
-                "diamond_block", "enchanted_golden_apple", "flow_armor_trim_smithing_template",
-                "flow_banner_pattern", "music_disc_creator", "heavy_core"}) {
-            out.add(Pattern.compile(s));
-        }
-        return out;
-    }
-
-    // Enchantment tables mirrored from OminousVaultPredictor pools (names only).
-    private static final Map<String, String[][]> ENCH_OPTIONS = Map.of(
-            "crossbow", new String[][]{
-                    {"mending", "1", "1"}, {"multishot", "1", "1"}, {"piercing", "1", "4"},
-                    {"quick_charge", "1", "3"}, {"unbreaking", "1", "3"}, {"vanishing_curse", "1", "1"}},
-            "diamond_axe", new String[][]{
-                    {"efficiency", "1", "5"}, {"fortune", "1", "3"}, {"mending", "1", "1"},
-                    {"silk_touch", "1", "1"}, {"unbreaking", "1", "3"}, {"vanishing_curse", "1", "1"}},
-            "diamond_chestplate", new String[][]{
-                    {"binding_curse", "1", "1"}, {"blast_protection", "1", "4"}, {"fire_protection", "1", "4"},
-                    {"mending", "1", "1"}, {"projectile_protection", "1", "4"}, {"protection", "1", "4"},
-                    {"thorns", "1", "3"}, {"unbreaking", "1", "3"}, {"vanishing_curse", "1", "1"}});
-    private static final String[] BOOK_A = {"knockback", "punch", "smite", "looting", "multishot"};
-    private static final String[] BOOK_B = {"breach", "density"};
+    private static final Color WORKSPACE = new Color(0xF4F6F4);
+    private static final Color TEXT = new Color(0x18332C);
+    private static final Color SECONDARY = new Color(0x50685F);
 
     private JTextField seedField = new JTextField(12);
     private DefaultListModel<String> vaultModel = new DefaultListModel<>();
-    private JList<String> vaultList = new JList<>(vaultModel);
+    private JList<String> vaultList = new JList<>(vaultModel) {
+        @Override public boolean getScrollableTracksViewportWidth() { return true; }
+
+        @Override public String getToolTipText(MouseEvent e) {
+            int index = locationToIndex(e.getPoint());
+            if (index < 0 || !getCellBounds(index, index).contains(e.getPoint())) return null;
+            return "Vault " + (index + 1) + " · " + String.join(" · ", lootLabels(vaultModel.get(index)));
+        }
+    };
     private JComboBox<String> targetCombo = new JComboBox<>();
     private JTextArea outputArea = new JTextArea();
     private JLabel statusLabel = new JLabel("Ready.");
-    private JCheckBox useOffsetCheck = new JCheckBox("Predict from recovered state (uncheck: fresh seed / offset 0)");
+    private JCheckBox useOffsetCheck = new JCheckBox("Use recovered position");
     private Integer recoveredOffset;
+    private long recoveryRevision;
     private JSpinner forecastCapSpinner = new JSpinner(new SpinnerNumberModel(500, 10, 100000, 50));
 
     public VaultPredictorGui() {
         super("Ominous Vault Predictor - Minecraft 1.21.11");
         setDefaultCloseOperation(EXIT_ON_CLOSE);
-        setLayout(new BorderLayout(8, 8));
+        JPanel shell = new JPanel(new BorderLayout(12, 10));
+        shell.setBorder(new EmptyBorder(12, 16, 10, 16));
+        shell.setBackground(WORKSPACE);
+        setContentPane(shell);
         add(buildTopPanel(), BorderLayout.NORTH);
         add(buildLeftPanel(), BorderLayout.WEST);
         add(buildRightTabs(), BorderLayout.CENTER);
         add(statusLabel, BorderLayout.SOUTH);
         setJMenuBar(buildMenu());
-        setSize(1080, 720);
+        seedField.getDocument().addDocumentListener(new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent e) { invalidateRecovery(); }
+            @Override public void removeUpdate(DocumentEvent e) { invalidateRecovery(); }
+            @Override public void changedUpdate(DocumentEvent e) { invalidateRecovery(); }
+        });
+        setMinimumSize(new Dimension(920, 570));
+        setSize(1100, 720);
         setLocationRelativeTo(null);
     }
 
@@ -157,66 +112,215 @@ public final class VaultPredictorGui extends JFrame {
             return;
         }
         seedField.setText(p.getProperty("seed", ""));
-        targetCombo.setSelectedItem(p.getProperty("target", "minecraft:heavy_core"));
+        targetCombo.setSelectedItem(p.getProperty("target", "Heavy core"));
         vaultModel.clear();
         p.stringPropertyNames().stream()
                 .filter(k -> k.startsWith("vault."))
                 .sorted(Comparator.comparingInt(k -> Integer.parseInt(k.substring(6))))
                 .forEach(k -> vaultModel.addElement(p.getProperty(k)));
-        recoveredOffset = null;
+        invalidateRecovery();
         status("Loaded profile from " + fc.getSelectedFile().getName());
     }
 
     private JPanel buildTopPanel() {
-        JPanel top = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        top.add(new JLabel("World seed:"));
-        top.add(seedField);
-        top.add(useOffsetCheck);
+        JPanel top = new JPanel(new BorderLayout(0, 10));
+        top.setOpaque(false);
+        JLabel title = new JLabel("Ominous Vault Predictor");
+        title.setForeground(TEXT);
+        title.setFont(title.getFont().deriveFont(Font.BOLD, 23f));
+        JLabel version = new JLabel("Java Edition 1.21.11", SwingConstants.RIGHT);
+        version.setForeground(SECONDARY);
+        JPanel heading = new JPanel(new BorderLayout());
+        heading.setOpaque(false);
+        heading.add(title, BorderLayout.WEST);
+        heading.add(version, BorderLayout.EAST);
+        top.add(heading, BorderLayout.NORTH);
+
+        JPanel settings = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 7));
+        settings.setBackground(Color.WHITE);
+        settings.setBorder(BorderFactory.createLineBorder(new Color(0xD6E0DA)));
+        JLabel seedLabel = new JLabel("World seed");
+        seedLabel.setLabelFor(seedField);
+        settings.add(seedLabel);
+        settings.add(seedField);
+        JLabel targetLabel = new JLabel("Target item");
+        targetLabel.setLabelFor(targetCombo);
+        settings.add(targetLabel);
         useOffsetCheck.setEnabled(false);
-        top.add(new JLabel("Target item:"));
+        useOffsetCheck.setOpaque(false);
+        useOffsetCheck.setToolTipText("When unchecked, forecasts start at the first vault for this seed.");
         targetCombo.setEditable(false);
-        TEMPLATES.forEach(t -> targetCombo.addItem(displayToTarget(t)));
-        targetCombo.setSelectedItem("minecraft:heavy_core");
-        top.add(targetCombo);
+        for (VaultLoot.Item item : VaultLoot.Item.values()) targetCombo.addItem(item.profileLabel);
+        targetCombo.setRenderer(new DefaultListCellRenderer() {
+            @Override public Component getListCellRendererComponent(JList<?> list, Object value, int index,
+                    boolean selected, boolean focus) {
+                VaultLoot.Item item = targetItem((String) value);
+                return super.getListCellRendererComponent(list, item == null ? value : item.label, index, selected, focus);
+            }
+        });
+        targetCombo.setSelectedItem("Heavy core");
+        settings.add(targetCombo);
+        settings.add(useOffsetCheck);
+        top.add(settings, BorderLayout.CENTER);
         return top;
     }
 
-    private static String displayToTarget(Template t) {
-        // dropdown shows human names; mapping kept simple via display string
-        return t.display;
+    private String selectedToken() {
+        VaultLoot.Item item = targetItem((String) targetCombo.getSelectedItem());
+        return item == null ? "heavy_core" : item.token;
     }
 
-    private String selectedToken() {
-        String sel = (String) targetCombo.getSelectedItem();
-        for (Template t : TEMPLATES) if (t.display.equals(sel)) return t.token;
-        return "heavy_core";
+    private static VaultLoot.Item targetItem(String selection) {
+        for (VaultLoot.Item item : VaultLoot.Item.values()) {
+            if (item.profileLabel.equals(selection)) return item;
+        }
+        return null;
     }
 
     private JPanel buildLeftPanel() {
-        JPanel left = new JPanel(new BorderLayout(4, 4));
-        left.setBorder(new TitledBorder("Observed vaults (YOUR opens, in exact order)"));
-        vaultList.setVisibleRowCount(14);
-        left.add(new JScrollPane(vaultList), BorderLayout.CENTER);
+        JPanel left = new JPanel(new BorderLayout(0, 9));
+        left.setPreferredSize(new Dimension(345, 0));
+        left.setOpaque(false);
+        JLabel title = new JLabel("Vault history");
+        title.setFont(title.getFont().deriveFont(Font.BOLD, 20f));
+        title.setForeground(TEXT);
+        JLabel count = new JLabel();
+        count.setForeground(SECONDARY);
+        JPanel heading = new JPanel(new BorderLayout(0, 3));
+        heading.setOpaque(false);
+        heading.add(title, BorderLayout.NORTH);
+        heading.add(count, BorderLayout.CENTER);
+        JButton add = VaultLootEditor.primary("Log vault…");
+        add.addActionListener(e -> editVault(-1));
+        JPanel top = new JPanel(new BorderLayout(6, 0));
+        top.setOpaque(false);
+        top.add(heading, BorderLayout.CENTER);
+        top.add(add, BorderLayout.EAST);
+        left.add(top, BorderLayout.NORTH);
 
-        JPanel btns = new JPanel(new GridLayout(0, 1, 4, 4));
-        JButton add = new JButton("Add observed vault...");
-        add.addActionListener(e -> new AddObservedVaultDialog(this).setVisible(true));
-        JButton del = new JButton("Remove selected");
-        del.addActionListener(e -> {
-            int i = vaultList.getSelectedIndex();
-            if (i >= 0) { vaultModel.remove(i); recoveredOffset = null; useOffsetCheck.setEnabled(false); }
+        vaultList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        vaultList.setToolTipText("");
+        vaultList.setCellRenderer(new HistoryRenderer());
+        vaultList.setFixedCellHeight(53);
+        vaultList.addMouseListener(new MouseAdapter() {
+            @Override public void mouseClicked(MouseEvent e) {
+                int index = vaultList.locationToIndex(e.getPoint());
+                if (e.getClickCount() == 2 && index >= 0 && vaultList.getCellBounds(index, index).contains(e.getPoint())) {
+                    editVault(index);
+                }
+            }
         });
-        JButton up = new JButton("Move up");
-        up.addActionListener(e -> swap(-1));
-        JButton down = new JButton("Move down");
-        down.addActionListener(e -> swap(1));
-        btns.add(add); btns.add(del); btns.add(up); btns.add(down);
+        JScrollPane scroll = new JScrollPane(vaultList);
+        scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        left.add(scroll, BorderLayout.CENTER);
 
-        JButton recover = new JButton("Recover offset from these vaults");
+        JButton edit = new JButton("Edit…");
+        edit.addActionListener(e -> editSelectedVault());
+        JButton remove = new JButton("Remove");
+        remove.addActionListener(e -> removeSelectedVault());
+        JButton up = new JButton("Up");
+        up.addActionListener(e -> swap(-1));
+        JButton down = new JButton("Down");
+        down.addActionListener(e -> swap(1));
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+        actions.setOpaque(false);
+        actions.add(edit);
+        actions.add(up);
+        actions.add(down);
+        actions.add(remove);
+
+        JButton recover = new JButton("Recover offset");
         recover.addActionListener(e -> runRecovery());
-        btns.add(recover);
-        left.add(btns, BorderLayout.SOUTH);
+        JPanel footer = new JPanel(new BorderLayout(0, 8));
+        footer.setOpaque(false);
+        footer.add(actions, BorderLayout.NORTH);
+        footer.add(recover, BorderLayout.SOUTH);
+        left.add(footer, BorderLayout.SOUTH);
+
+        Runnable refresh = () -> {
+            int total = vaultModel.size();
+            int selected = vaultList.getSelectedIndex();
+            count.setText(total == 0 ? "Log your drops in opening order" : total + (total == 1 ? " vault · oldest first" : " vaults · oldest first"));
+            edit.setEnabled(selected >= 0);
+            remove.setEnabled(selected >= 0);
+            up.setEnabled(selected > 0);
+            down.setEnabled(selected >= 0 && selected < total - 1);
+            recover.setEnabled(total > 0);
+        };
+        vaultList.addListSelectionListener(e -> refresh.run());
+        vaultModel.addListDataListener(new ListDataListener() {
+            @Override public void intervalAdded(ListDataEvent e) { refresh.run(); }
+            @Override public void intervalRemoved(ListDataEvent e) { refresh.run(); }
+            @Override public void contentsChanged(ListDataEvent e) { refresh.run(); }
+        });
+        vaultList.getInputMap().put(KeyStroke.getKeyStroke("F2"), "editVault");
+        vaultList.getActionMap().put("editVault", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { editSelectedVault(); }
+        });
+        refresh.run();
         return left;
+    }
+
+    private void editSelectedVault() {
+        int index = vaultList.getSelectedIndex();
+        if (index >= 0) editVault(index);
+    }
+
+    private void editVault(int index) {
+        String initial = index < 0 ? null : vaultModel.get(index);
+        int number = index < 0 ? vaultModel.size() + 1 : index + 1;
+        String result = new VaultLootEditor(this, number, initial).showEditor();
+        if (result == null || result.equals(initial)) return;
+        if (index < 0) {
+            index = vaultModel.size();
+            vaultModel.addElement(result);
+        } else {
+            vaultModel.set(index, result);
+        }
+        vaultList.setSelectedIndex(index);
+        vaultList.ensureIndexIsVisible(index);
+        invalidateRecovery();
+    }
+
+    private void removeSelectedVault() {
+        int selected = vaultList.getSelectedIndex();
+        if (selected < 0) return;
+        vaultModel.remove(selected);
+        if (!vaultModel.isEmpty()) vaultList.setSelectedIndex(Math.min(selected, vaultModel.size() - 1));
+        invalidateRecovery();
+    }
+
+    private static List<String> lootLabels(String line) {
+        return VaultLoot.split(line).stream().map(VaultLoot::display).toList();
+    }
+
+    private static final class HistoryRenderer extends JPanel implements ListCellRenderer<String> {
+        private final JLabel title = new JLabel();
+        private final JLabel loot = new JLabel();
+
+        HistoryRenderer() {
+            super(new GridLayout(2, 1));
+            title.setFont(title.getFont().deriveFont(Font.BOLD));
+            setBorder(new EmptyBorder(5, 8, 5, 8));
+            title.putClientProperty("html.disable", true);
+            loot.putClientProperty("html.disable", true);
+            add(title);
+            add(loot);
+        }
+
+        @Override public Component getListCellRendererComponent(JList<? extends String> list, String value,
+                int index, boolean selected, boolean focused) {
+            List<String> items = lootLabels(value);
+            String preview = String.join("  ·  ", items.stream().limit(2).toList());
+            if (items.size() > 2) preview += "  ·  +" + (items.size() - 2) + " more";
+            title.setText("Vault " + (index + 1) + "  ·  " + items.size() + (items.size() == 1 ? " entry" : " entries"));
+            loot.setText(preview);
+            setBackground(selected ? list.getSelectionBackground() : list.getBackground());
+            Color foreground = selected ? list.getSelectionForeground() : list.getForeground();
+            title.setForeground(foreground);
+            loot.setForeground(foreground);
+            return this;
+        }
     }
 
     private void swap(int delta) {
@@ -227,23 +331,24 @@ public final class VaultPredictorGui extends JFrame {
         vaultModel.set(i, vaultModel.get(j));
         vaultModel.set(j, a);
         vaultList.setSelectedIndex(j);
+        invalidateRecovery();
+    }
+
+    private void invalidateRecovery() {
         recoveredOffset = null;
+        recoveryRevision++;
+        useOffsetCheck.setSelected(false);
         useOffsetCheck.setEnabled(false);
+        outputArea.setText("");
+        status("Ready.");
     }
 
     private void runRecovery() {
         Long seed = parseSeed();
         if (seed == null || vaultModel.isEmpty()) return;
-        List<List<String>> known = new ArrayList<>();
-        Enumeration<String> en = vaultModel.elements();
-        while (en.hasMoreElements()) {
-            List<String> items = new ArrayList<>();
-            for (String part : en.nextElement().split(";")) {
-                String t = part.trim();
-                if (!t.isEmpty()) items.add(t);
-            }
-            known.add(items);
-        }
+        invalidateRecovery();
+        long revision = recoveryRevision;
+        List<List<String>> known = Collections.list(vaultModel.elements()).stream().map(VaultLoot::split).toList();
         status("Recovering offset...");
         SwingWorker<Integer, Void> w = new SwingWorker<>() {
             @Override protected Integer doInBackground() {
@@ -251,21 +356,24 @@ public final class VaultPredictorGui extends JFrame {
                         OminousVaultPredictor.VaultRng.fromSeed(seed), known, 100_000);
             }
             @Override protected void done() {
+                if (revision != recoveryRevision) return;
                 try {
                     int off = get();
-                    if (off < 0) {
+                    if (off == OminousVaultPredictor.AMBIGUOUS_OFFSET) {
+                        status("Multiple offsets matched. Add more consecutive vault results.");
+                    } else if (off == OminousVaultPredictor.NO_OFFSET) {
                         status("No offset matched - check order / solo-consumption assumption.");
                         JOptionPane.showMessageDialog(VaultPredictorGui.this,
                                 "No consistent offset found within 100,000.\n\n" +
                                 "Common causes:\n" +
                                 "- vault entries not in the exact order you opened them\n" +
-                                "- something else (other player?) opened an ominous vault in between\n" +
-                                "- typo in an item entry (must match simulator format exactly)\n\n" +
-                                "If these were truly your world's FIRST ominous vaults (offset 0), " +
-                                "even the very first open failed to match - the seeded-init model " +
-                                "likely diverges from your runtime (see README caveats).");
+                                "- another player opened an ominous vault in between\n" +
+                                "- a missing or incorrect loot entry\n" +
+                                "- server loot or random sequence settings differ from vanilla 1.21.11");
                     } else {
                         recoveredOffset = off;
+                        recoveryRevision++;
+                        outputArea.setText("");
                         useOffsetCheck.setEnabled(true);
                         useOffsetCheck.setSelected(true);
                         status("Recovered: " + off + " vaults were already opened before your first observation.");
@@ -285,10 +393,10 @@ public final class VaultPredictorGui extends JFrame {
 
         JPanel forecast = new JPanel(new BorderLayout(4, 4));
         JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        bar.add(new JLabel("Simulate up to"));
+        bar.add(new JLabel("Search up to"));
         bar.add(forecastCapSpinner);
-        bar.add(new JLabel("future vaults; report first vault containing target."));
-        JButton go = new JButton("Find my loot!");
+        bar.add(new JLabel("upcoming vaults"));
+        JButton go = VaultLootEditor.primary("Find my loot!");
         go.addActionListener(e -> runForecast());
         bar.add(go);
         forecast.add(bar, BorderLayout.NORTH);
@@ -304,22 +412,22 @@ public final class VaultPredictorGui extends JFrame {
 
     private String buildStatsText() {
         StringBuilder sb = new StringBuilder();
-        sb.append("Per-vault probabilities from the verified 1.21.11 tables\\n");
-        sb.append("======================================================\\n\\n");
-        sb.append("UNIQUE pool items (single slot per vault):\\n");
+        sb.append("Per-vault probabilities from the verified 1.21.11 tables\n");
+        sb.append("======================================================\n\n");
+        sb.append("UNIQUE pool items (single slot per vault):\n");
         row(sb, "heavy_core", 0.75 * 1 / 10.0);
         row(sb, "enchanted_golden_apple", 0.75 * 3 / 10.0);
         row(sb, "flow_armor_trim_smithing_template", 0.75 * 3 / 10.0);
         row(sb, "flow_banner_pattern", 0.75 * 2 / 10.0);
         row(sb, "music_disc_creator", 0.75 * 1 / 10.0);
-        sb.append("\\nRARE-table items (exact; vault fires rare branch with p=0.8):\\n");
+        sb.append("\nRARE-table items (exact; vault fires rare branch with p=0.8):\n");
         int[][] rareW = {{5, 29}, {4, 29}, {4, 29}, {3, 29}, {3, 29}, {3, 29}, {2, 29}, {2, 29}, {2, 29}, {1, 29}};
         String[] rareNames = {"emerald_block", "iron_block", "crossbow(any enchant)", "golden_apple",
                 "diamond_axe(any enchant)", "diamond_chestplate(any enchant)",
                 "book(one of 5 enchants)", "book(breach/density)", "book[wind_burst]", "diamond_block"};
         for (int i = 0; i < rareNames.length; i++) row(sb, rareNames[i], 0.8 * rareW[i][0] / (double) rareW[i][1]);
-        sb.append("\\nCOMMON stackables (approx: ignores multi-roll overlap;\\n");
-        sb.append("p >= value shown since pool 2 rolls 1..3 extra times):\\n");
+        sb.append("\nCOMMON stackables (approx: ignores multi-roll overlap;\n");
+        sb.append("p >= value shown since pool 2 rolls 1..3 extra times):\n");
         row(sb, "emerald (any amount)", 0.2 * 5 / 15.0);
         row(sb, "wind_charge (any amount)", 0.2 * 4 / 15.0);
         row(sb, "tipped_arrow_slowness (any amount)", 0.2 * 3 / 15.0);
@@ -349,15 +457,17 @@ public final class VaultPredictorGui extends JFrame {
         int cap = (Integer) forecastCapSpinner.getValue();
         Integer off = recoveredOffset;
         boolean useRec = useOffsetCheck.isSelected() && off != null;
+        int observedVaults = vaultModel.size();
+        long revision = recoveryRevision;
         status("Simulating...");
         SwingWorker<String, Void> w = new SwingWorker<>() {
             @Override protected String doInBackground() {
                 OminousVaultPredictor.VaultRng rng = OminousVaultPredictor.VaultRng.fromSeed(seed);
-                long skip = (useRec ? off : 0L);
+                long skip = useRec ? (long) off + observedVaults : 0L;
                 for (long i = 0; i < skip; i++) OminousVaultPredictor.simulateVault(rng);
                 StringBuilder sb = new StringBuilder();
                 sb.append("Using seed ").append(seed).append(useRec ? (" + recovered offset " + off) : " (offset 0)").append("\n");
-                if (!useRec && off == null && !vaultModel.isEmpty()) {
+                if (!useRec && off == null && observedVaults > 0) {
                     sb.append("NOTE: observations exist but were never recovered - results are for offset 0!\n");
                 }
                 sb.append("Simulating the next ").append(cap).append(" ominous vaults you open, looking for \"").append(token).append("\"...\n\n");
@@ -400,6 +510,7 @@ public final class VaultPredictorGui extends JFrame {
                 return sb.toString();
             }
             @Override protected void done() {
+                if (revision != recoveryRevision) return;
                 try { outputArea.setText(get()); status("Forecast complete."); }
                 catch (Exception ex) { status("Forecast failed: " + ex.getMessage()); }
             }
@@ -417,178 +528,6 @@ public final class VaultPredictorGui extends JFrame {
     }
 
     private void status(String s) { statusLabel.setText(s); }
-
-    /** Builds one observed-vault line from dropdowns/spinners; appends to vaultModel. */
-    private final class AddObservedVaultDialog extends JDialog {
-        private final DefaultListModel<String> itemModel = new DefaultListModel<>();
-        private final List<String> pendingEnchants = new ArrayList<>();
-        private final JLabel pendingLabel = new JLabel(" ");
-        private final JComboBox<Template> kindCombo = new JComboBox<>();
-        private final JComboBox<String> bottleLvl = new JComboBox<>(new String[]{"III", "IV", "V"});
-        private final JComboBox<String> enchCombo = new JComboBox<>();
-        private final SpinnerNumberModel levelModel = new SpinnerNumberModel(1, 1, 5, 1);
-        private final SpinnerNumberModel qtyModel = new SpinnerNumberModel(4, 1, 64, 1);
-        private final CardLayout cards = new CardLayout();
-        private final JPanel cardPanel = new JPanel(cards);
-
-        AddObservedVaultDialog(Frame owner) {
-            super(owner, "Add observed vault", true);
-            setLayout(new BorderLayout(6, 6));
-            TEMPLATES.forEach(kindCombo::addItem);
-            kindCombo.setRenderer(new DefaultListCellRenderer() {
-                @Override public Component getListCellRendererComponent(JList<?> l, Object v,
-                        int i, boolean sel, boolean foc) {
-                    return super.getListCellRendererComponent(l, ((Template) v).display, i, sel, foc);
-                }
-            });
-            kindCombo.addActionListener(e -> syncFields());
-
-            JPanel common = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            common.add(new JLabel("Item:"));
-            common.add(kindCombo);
-
-            JPanel qtyCard = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            qtyCard.add(new JLabel("Amount:"));
-            qtyCard.add(new JSpinner(qtyModel));
-            JPanel bottleCard = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            bottleCard.add(new JLabel("Level:"));
-            bottleCard.add(bottleLvl);
-            JPanel enchCard = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            enchCard.add(new JLabel("Enchantment:"));
-            enchCard.add(enchCombo);
-            enchCard.add(new JLabel("Level:"));
-            enchCard.add(new JSpinner(levelModel));
-            enchCard.add(new JSpinner(levelModel));
-            JButton moreEnch = new JButton("+ Add enchant");
-            moreEnch.addActionListener(e -> {
-                String rawSel = String.valueOf(enchCombo.getSelectedItem());
-                if (rawSel.contains("(lv ")) {
-                    pendingEnchants.add(rawSel.split(" ")[0] + " " + levelModel.getValue());
-                    pendingLabel.setText(String.join(" | ", pendingEnchants));
-                }
-            });
-            enchCard.add(moreEnch);
-            enchCard.add(pendingLabel);
-
-            cardPanel.add(qtyCard, "QTY");
-            cardPanel.add(bottleCard, "BOTTLE");
-            cardPanel.add(enchCard, "ENCH");
-            cardPanel.add(new JLabel(" "), "NONE");
-
-            JList<String> itemsList = new JList<>(itemModel);
-            itemsList.setVisibleRowCount(6);
-            JButton addItem = new JButton("Add this item to vault");
-            addItem.addActionListener(e -> commitItem());
-            JButton rmItem = new JButton("Remove selected item");
-            rmItem.addActionListener(e -> {
-                int i = itemsList.getSelectedIndex();
-                if (i >= 0) itemModel.remove(i);
-            });
-            JButton ok = new JButton("OK - save vault");
-            ok.addActionListener(e -> {
-                if (!itemModel.isEmpty()) {
-                    List<String> its = Collections.list(itemModel.elements());
-                    vaultModel.addElement(String.join("; ", its));
-                    recoveredOffset = null;
-                    useOffsetCheck.setEnabled(false);
-                }
-                dispose();
-            });
-            JButton cancel = new JButton("Cancel");
-            cancel.addActionListener(e -> dispose());
-
-            JPanel south = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-            south.add(ok); south.add(cancel);
-
-            JPanel center = new JPanel(new BorderLayout(6, 6));
-            JPanel north = new JPanel(new BorderLayout(6, 6));
-            north.add(common, BorderLayout.NORTH);
-            north.add(cardPanel, BorderLayout.CENTER);
-            JPanel midBtns = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            midBtns.add(addItem); midBtns.add(rmItem);
-            center.add(north, BorderLayout.NORTH);
-            center.add(midBtns, BorderLayout.CENTER);
-            center.add(new JScrollPane(itemsList), BorderLayout.SOUTH);
-
-            add(center, BorderLayout.CENTER);
-            add(south, BorderLayout.SOUTH);
-            setSize(560, 420);
-            setLocationRelativeTo(owner);
-            syncFields();
-        }
-
-        private void syncFields() {
-            pendingEnchants.clear(); pendingLabel.setText(" ");
-            Template t = (Template) kindCombo.getSelectedItem();
-            switch (t.kind) {
-                case STACK -> { cards.show(cardPanel, "QTY");
-                    // ponytail: bounds 1..64 on purpose - observed loot may fall outside predicted table ranges,
-                    // and recovery MUST see that divergence rather than have it clamped away.
-                    qtyModel.setMinimum(1); qtyModel.setMaximum(64);
-                    int q = (Integer) qtyModel.getValue();
-                    if (q < 1 || q > 64) qtyModel.setValue(Math.max(1, Math.min(64, q))); }
-                case PLAIN -> cards.show(cardPanel, t.token.equals("ominous_bottle") ? "BOTTLE" : "NONE");
-                case GEAR -> { fillEnch(t.token); cards.show(cardPanel, "ENCH"); }
-                case BOOK_GROUP -> { fillEnch(t.display.contains("breach") ? "BOOK_B" : "BOOK_A"); cards.show(cardPanel, "ENCH"); }
-                case FIXED_BOOK -> cards.show(cardPanel, "NONE");
-            }
-        }
-
-        private void fillEnch(String key) {
-            enchCombo.removeAllItems();
-            String[][] opts;
-            if (key.equals("BOOK_A")) opts = bookA();
-            else if (key.equals("BOOK_B")) opts = bookB();
-            else opts = ENCH_OPTIONS.get(key);
-            for (String[] o : opts) enchCombo.addItem(o[0] + " (lv " + o[1] + "-" + o[2] + ")");
-            enchCombo.setActionCommand(key);
-            enchCombo.putClientProperty("opts", opts);
-            adjustLevelBounds();
-        }
-
-        private String[][] bookA() {
-            return new String[][]{{"knockback", "1", "2"}, {"punch", "1", "2"}, {"smite", "1", "5"},
-                    {"looting", "1", "3"}, {"multishot", "1", "1"}};
-        }
-
-        private String[][] bookB() {
-            return new String[][]{{"breach", "1", "4"}, {"density", "1", "5"}};
-        }
-
-        private void adjustLevelBounds() {
-            String sel = String.valueOf(enchCombo.getSelectedItem());
-            if (sel == null || !sel.contains("lv ")) return;
-            try {
-                String[] parts = sel.split("lv ")[1].replace(")", "").split("-");
-                int lo = Integer.parseInt(parts[0]);
-                int hi = Integer.parseInt(parts[1]);
-                levelModel.setMinimum(lo);
-                levelModel.setMaximum(hi);
-                if ((Integer) levelModel.getValue() > hi || (Integer) levelModel.getValue() < lo)
-                    levelModel.setValue(lo);
-            } catch (Exception ignored) { }
-        }
-
-        private void commitItem() {
-            Template t = (Template) kindCombo.getSelectedItem();
-            String s;
-            switch (t.kind) {
-                case STACK -> s = t.token + " x" + qtyModel.getValue();
-                case PLAIN -> s = t.token.equals("ominous_bottle")
-                        ? "ominous_bottle " + bottleLvl.getSelectedItem() : t.token;
-                case FIXED_BOOK -> s = "book[wind_burst]";
-                default -> {
-                    List<String> parts = new ArrayList<>(pendingEnchants);
-                    String raw = String.valueOf(enchCombo.getSelectedItem());
-                    parts.add(raw.split(" ")[0] + " " + levelModel.getValue());
-                    s = t.token + "[" + String.join(",", parts) + "]";
-                    pendingEnchants.clear();
-                    pendingLabel.setText(" ");
-                }
-            }
-            itemModel.addElement(s);
-        }
-    }
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> new VaultPredictorGui().setVisible(true));
