@@ -1,6 +1,7 @@
 # Gradle
 .gradle/
 build/
+/fabric/run/
 !gradle/wrapper/gradle-wrapper.jar
 
 # IDE
@@ -24,3 +25,4 @@ Desktop.ini
 *.log
 local.properties
 .env
+

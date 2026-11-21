@@ -1,0 +1,29 @@
+plugins {
+    id 'net.fabricmc.fabric-loom-remap' version '1.17.11'
+}
+
+group = 'dev.leo'
+version = '1.0.0'
+
+dependencies {
+    minecraft 'com.mojang:minecraft:1.21.11'
+    mappings loom.officialMojangMappings()
+    modImplementation 'net.fabricmc:fabric-loader:0.19.2'
+    modImplementation 'net.fabricmc.fabric-api:fabric-api:0.141.3+1.21.11'
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+}
+
+// Compile the shared predictor directly into the mod without shipping Swing.
+sourceSets.main.java {
+    srcDir '../src/main/java'
+    exclude '**/VaultPredictorGui.java', '**/VaultLootEditor.java', '**/InputStyle.java'
+}
+
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') { expand version: project.version }
+}
+

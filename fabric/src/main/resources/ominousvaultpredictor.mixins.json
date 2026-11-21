@@ -1,0 +1,8 @@
+{
+  "required": true,
+  "package": "dev.leo.vaultpredictor.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": ["VaultCapturePackets"],
+  "injectors": {"defaultRequire": 1}
+}
+

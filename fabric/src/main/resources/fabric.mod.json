@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "ominousvaultpredictor",
+  "version": "${version}",
+  "name": "Ominous Vault Predictor",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["dev.leo.vaultpredictor.VaultPredictorClient"]
+  },
+  "mixins": ["ominousvaultpredictor.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.19.2",
+    "fabric-api": "*",
+    "minecraft": "1.21.11",
+    "java": ">=21"
+  }
+}
+
