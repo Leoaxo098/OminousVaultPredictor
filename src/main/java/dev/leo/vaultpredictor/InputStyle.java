@@ -28,4 +28,3 @@ final class InputStyle {
                 BorderFactory.createEmptyBorder(5, 7, 5, 7)));
     }
 }
-

@@ -43,4 +43,3 @@ jobs:
             OminousVaultPredictor-desktop.jar
             OminousVaultPredictor-fabric-1.21.11.jar
           fail_on_unmatched_files: true
-

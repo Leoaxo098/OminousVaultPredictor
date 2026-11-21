@@ -122,4 +122,3 @@ both JARs attached.
   Any unlogged ominous vault openings after your first observation can shift the forecast.
 - CLI RNG snapshots from the old four-stream model must be regenerated from the
   world seed and vault history. Saved GUI profiles still work.
-

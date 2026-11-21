@@ -69,4 +69,3 @@ record VaultProfile(Long seed, List<String> observations) {
         }
     }
 }
-

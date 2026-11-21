@@ -365,4 +365,3 @@ public final class VaultPredictorClient implements ClientModInitializer {
         Minecraft.getInstance().gui.getChat().addMessage(Component.literal("[OVP] " + message));
     }
 }
-

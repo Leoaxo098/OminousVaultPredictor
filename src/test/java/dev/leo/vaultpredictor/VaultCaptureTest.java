@@ -42,4 +42,3 @@ class VaultCaptureTest {
         assertFalse(capture.complete());
     }
 }
-

@@ -592,4 +592,3 @@ public final class VaultPredictorGui extends JFrame {
         SwingUtilities.invokeLater(() -> new VaultPredictorGui().setVisible(true));
     }
 }
-

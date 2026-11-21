@@ -49,4 +49,3 @@ final class VaultItemStack {
         return (book ? "book" : name) + "[" + String.join(",", entries) + "]";
     }
 }
-

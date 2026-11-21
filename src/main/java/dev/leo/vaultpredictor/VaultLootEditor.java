@@ -494,4 +494,3 @@ final class VaultLootEditor extends JDialog {
         @Override public boolean getScrollableTracksViewportHeight() { return false; }
     }
 }
-

@@ -57,4 +57,3 @@ final class VaultCapture {
 
     List<String> loot() { return drops.values().stream().filter(Objects::nonNull).toList(); }
 }
-
