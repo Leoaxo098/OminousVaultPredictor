@@ -25,7 +25,7 @@ class OffsetRecoveryRoundTripTest {
     /**
      * Synthetic ground truth: hidden offset of 3 opens on seed 42, three
      * observed vaults, then the tool must recover offset=3 and predict the
-     * exact next vault. Also proves all four sequences stay in lockstep.
+     * exact next vault and resume the saved sequence.
      */
     @Test
     void recoversTrueOffsetAndPredictsNextExactContents() throws Exception {

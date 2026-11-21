@@ -12,13 +12,6 @@ class VaultSimulationTest {
     }
 
     @Test
-    void distinctSequencesGetDistinctStates() {
-        assertNotEquals(
-                OminousVaultPredictor.initialState(987654321L, OminousVaultPredictor.SEQ_ROOT),
-                OminousVaultPredictor.initialState(987654321L, OminousVaultPredictor.SEQ_RARE));
-    }
-
-    @Test
     void distinctSeedsGiveDistinctStates() {
         assertNotEquals(OminousVaultPredictor.initialState(1L), OminousVaultPredictor.initialState(2L));
     }

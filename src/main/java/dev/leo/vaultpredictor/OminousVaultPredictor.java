@@ -7,44 +7,24 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
+import java.util.regex.Pattern;
 
 /**
  * Standalone Minecraft Java 1.21.11 ominous-vault predictor.
  *
- * Loot model transcribed 1:1 from the vanilla 1.21.11 data-pack tables
- * (primary source: misode/mcmeta tag 1.21.11-data, Mojang data-generator
- * output; single-source verification - NOT independently diffed against the
- * Mojang jar itself):
- *
- *   chests/trial_chambers/reward_ominous
- *     Pool 1: rolls=1               -> rare(w8) / common(w2) nested refs
- *     Pool 2: rolls=uniform(1..3)   -> common
- *     Pool 3: rolls=1, random_chance(0.75) gate -> unique (weights 3,3,2,1,1)
- *   reward_ominous_rare    total weight 29
- *   reward_ominous_common  total weight 15
- *   reward_ominous_unique  total weight 10 (heavy_core weight 1)
- *
- * RNG model correction: EACH loot table declares its OWN random_sequence, so
- * FOUR streams exist (root/_rare/_common/_unique), each derived from the
- * world seed via lo = seed ^ H_LO, hi = lo + GOLDEN, XOR with MD5(path)
- * halves, Stafford13-mixed. One open advances several streams; because the
- * per-open consumption is deterministic, a scalar "offset" (#prior opens)
- * still replays all four streams in lockstep during recovery.
- *
- * IMPORTANT:
- * - Coordinates are labels/order only; they are NOT used to seed the RNG.
- * - Offsets/predictions are only meaningful when NOTHING ELSE consumed these
- *   sequences between your observations (singleplayer / solo on the server).
- * - Engine-level RandomSequences defaults (salt/include flags) are not
- *   observable from data files; live-world testing remains the final check.
+ * The root table creates a loot context using its world-seeded random
+ * sequence, which the nested tables inherit. Coordinates label results.
+ * Predictions assume the vanilla sequence is consumed by consecutive vault
+ * openings, with no other draws in between.
  */
 public final class OminousVaultPredictor {
 
     static final String SEQ_ROOT =
             "minecraft:chests/trial_chambers/reward_ominous";
-    static final String SEQ_RARE = SEQ_ROOT + "_rare";
-    static final String SEQ_COMMON = SEQ_ROOT + "_common";
-    static final String SEQ_UNIQUE = SEQ_ROOT + "_unique";
+    static final int NO_OFFSET = -1;
+    static final int AMBIGUOUS_OFFSET = -2;
+    private static final Pattern STACK = Pattern.compile(
+            "(emerald|wind_charge|tipped_arrow_slowness|diamond|ominous_bottle (?:III|IV|V)) x(\\d+)");
 
     public static void main(String[] args) throws Exception {
         Args a = Args.parse(args);
@@ -68,17 +48,20 @@ public final class OminousVaultPredictor {
         VaultRng rng = (a.stateFile != null) ? VaultRng.load(a.stateFile)
                                              : VaultRng.fromSeed(a.seed);
         if (hasOverride) {
-            // Debug hook: forces ONLY the root stream; the other three stay
-            // seed-derived. Prefer --state-file for a fully coherent resume.
             rng.root = new Xoroshiro128PlusPlus(a.stateLo, a.stateHi);
         }
 
         if (a.knownLootFile != null) {
             List<List<String>> known = readKnownLootFile(a.knownLootFile);
             System.out.println("Recovering sequence offsets from " + known.size() + " known vault results...");
-            int offset = recoverOffset(rng, known, a.maxSearch > 0 ? (int) a.maxSearch : 100_000);
-            if (offset < 0) {
-                System.out.println("No consistent offset found within search range " + a.maxSearch +
+            int searchLimit = a.maxSearch > 0 ? Math.toIntExact(a.maxSearch) : 100_000;
+            int offset = recoverOffset(rng, known, searchLimit);
+            if (offset == AMBIGUOUS_OFFSET) {
+                System.out.println("Multiple offsets match. Add more consecutive vault results to identify the offset.");
+                return;
+            }
+            if (offset == NO_OFFSET) {
+                System.out.println("No consistent offset found within search range " + searchLimit +
                         ". Either the opening order is wrong, something else consumed the");
                 System.out.println("sequences in between, or the model diverges from your runtime.");
                 return;
@@ -137,34 +120,31 @@ public final class OminousVaultPredictor {
     }
 
     // -----------------------------------------------------------------
-    // POOL MODEL (verified 1.21.11): three pools ALL fire. Pool 1 is an
-    // 80/20 weighted pick between two nested loot-table refs; pool 2 is
-    // uniform 1..3 more common-table invocations; pool 3 is a 75%-gated
-    // WEIGHTED draw from five uniques. The project notes claiming a
-    // weight-2175 mixed pool and a six-entry unique table with "empty"
-    // were WRONG - superseded by the fetched data-generator JSON.
+    // Pool 1 chooses rare/common, pool 2 rolls common 1..3 times, and pool 3
+    // has a 75% chance to roll the unique table once.
     // -----------------------------------------------------------------
     static LootResult simulateVault(VaultRng rng) {
         List<String> items = new ArrayList<>();
+        Xoroshiro128PlusPlus random = rng.root;
 
         // Pool 1 (rolls=1): rare(w8) vs common(w2).
-        if (rng.root.nextInt(10) < 8) {
-            simulateRare(rng, items);
+        if (random.nextInt(10) < 8) {
+            simulateRare(random, items);
         } else {
-            simulateCommon(rng, items);
+            simulateCommon(random, items);
         }
 
         // Pool 2: uniform rolls 1..3, each one common-table invocation.
-        int extraRolls = rng.root.nextInt(3) + 1;
+        int extraRolls = random.nextInt(3) + 1;
         for (int i = 0; i < extraRolls; i++) {
-            simulateCommon(rng, items);
+            simulateCommon(random, items);
         }
 
         // Pool 3 (rolls=1): random_chance(0.75) gate, then the WEIGHTED
         // unique table. Branch order matches JSON entry order so cumulative
         // range mapping stays bit-compatible with vanilla iteration.
-        if (rng.root.nextFloat() < 0.75f) {
-            int roll = rng.unique.nextInt(10);
+        if (random.nextFloat() < 0.75f) {
+            int roll = random.nextInt(10);
             if (roll < 3) {
                 items.add("enchanted_golden_apple");
             } else if (roll < 6) {
@@ -181,9 +161,8 @@ public final class OminousVaultPredictor {
         return new LootResult(false, items);
     }
 
-    /** reward_ominous_common: weights 5/4/3/2/1 = 15. Consumes COMMON stream. */
-    private static void simulateCommon(VaultRng rng, List<String> items) {
-        Xoroshiro128PlusPlus r = rng.common;
+    /** reward_ominous_common: weights 5/4/3/2/1 = 15. */
+    private static void simulateCommon(Xoroshiro128PlusPlus r, List<String> items) {
         int roll = r.nextInt(15);
         if (roll < 5) {
             int amt = 4 + r.nextInt(7);          // uniform 4..10
@@ -204,9 +183,8 @@ public final class OminousVaultPredictor {
         }
     }
 
-    /** reward_ominous_rare: weights 5,4,4,3,3,3,2,2,2,1 = 29. RARE stream. */
-    private static void simulateRare(VaultRng rng, List<String> items) {
-        Xoroshiro128PlusPlus r = rng.rare;
+    /** reward_ominous_rare: weights 5,4,4,3,3,3,2,2,2,1 = 29. */
+    private static void simulateRare(Xoroshiro128PlusPlus r, List<String> items) {
         int roll = r.nextInt(29);
         if (roll < 5) { items.add("emerald_block"); return; }
         if (roll < 9) { items.add("iron_block"); return; }
@@ -248,8 +226,9 @@ public final class OminousVaultPredictor {
     private static String simulateRandomBookEnchant(Xoroshiro128PlusPlus rng, EnchantDef[] options) {
         int idx = rng.nextInt(options.length);
         EnchantDef e = options[idx];
-        // EnchantRandomlyFunction calls enchantItem -> one level selection.
-        int level = rng.nextInt(e.maxLevel - e.minLevel + 1) + e.minLevel;
+        // A fixed enchantment level consumes no random draw in vanilla.
+        int level = e.minLevel == e.maxLevel ? e.minLevel
+                : rng.nextInt(e.maxLevel - e.minLevel + 1) + e.minLevel;
         return e.name + " " + level;
     }
 
@@ -277,23 +256,15 @@ public final class OminousVaultPredictor {
         List<EnchantmentInstance> available = getAvailable(pool, level);
         List<EnchantmentInstance> selected = new ArrayList<>(2);
 
-        while (!available.isEmpty()) {
-            EnchantmentInstance chosen = weightedPick(rng, available);
-            selected.add(chosen);
-
-            if (rng.nextInt(50) > level) {
-                break;
+        if (!available.isEmpty()) {
+            selected.add(weightedPick(rng, available));
+            while (rng.nextInt(50) <= level) {
+                EnchantDef last = selected.getLast().enchant;
+                available.removeIf(e -> !areCompatible(e.enchant, last));
+                if (available.isEmpty()) break;
+                selected.add(weightedPick(rng, available));
+                level /= 2;
             }
-
-            if (!selected.isEmpty()) {
-                EnchantmentInstance last = selected.get(selected.size() - 1);
-                available.removeIf(e -> !areCompatible(e.enchant, last.enchant));
-            }
-            if (available.isEmpty()) break;
-
-            EnchantmentInstance chosen2 = weightedPick(rng, available);
-            selected.add(chosen2);
-            level /= 2;
         }
 
         StringBuilder sb = new StringBuilder();
@@ -333,8 +304,7 @@ public final class OminousVaultPredictor {
     }
 
     private static boolean areCompatible(EnchantDef a, EnchantDef b) {
-        return a.exclusiveGroup == null || b.exclusiveGroup == null ||
-                !a.exclusiveGroup.equals(b.exclusiveGroup);
+        return a != b && (a.exclusiveGroup == null || !a.exclusiveGroup.equals(b.exclusiveGroup));
     }
 
     private static int clamp(int v, int min, int max) {
@@ -345,10 +315,6 @@ public final class OminousVaultPredictor {
     static long parseSeedString(String s) { return Args.parseBits(s); }
 
     static RandomState initialState(long worldSeed) {
-        return initialState(worldSeed, SEQ_ROOT);
-    }
-
-    static RandomState initialState(long worldSeed, String sequenceId) {
         // RandomSequences defaults in 1.21.11: salt=0, includeWorldSeed=true.
         // The sequence id contributes via MD5 of the FULL resource location,
         // XORed big-endian into both halves before Stafford13 mixing.
@@ -359,7 +325,7 @@ public final class OminousVaultPredictor {
         byte[] digest;
         try {
             MessageDigest md = MessageDigest.getInstance("MD5");
-            digest = md.digest(sequenceId.getBytes(StandardCharsets.UTF_8));
+            digest = md.digest(SEQ_ROOT.getBytes(StandardCharsets.UTF_8));
         } catch (NoSuchAlgorithmException e) {
             throw new AssertionError(e);
         }
@@ -388,38 +354,53 @@ public final class OminousVaultPredictor {
 
     /**
      * Recover how many whole vault-opens precede the known observations by
-     * brute-force replaying from the seed-derived state. All four streams
-     * advance deterministically per simulated open, so matching N consecutive
-     * real vaults (multiset of full item lists) pins the JOINT state.
+     * replaying the seed-derived sequence and comparing consecutive results.
      */
     static int recoverOffset(VaultRng rng, List<List<String>> knownLoots, int maxSearch) {
         if (knownLoots.isEmpty()) {
             throw new IllegalArgumentException("Need at least 1 known observed vault result to recover offset");
         }
-        // ponytail: incremental replay - ONE simulated open between candidates instead of
-        // re-simulating every prior open per candidate (the old loop was O(maxSearch^2)
-        // ~= billions of sims on a miss; ceiling remains maxSearch candidates).
+        List<Map<String, Integer>> observations = knownLoots.stream()
+                .map(OminousVaultPredictor::normalizeLoot).toList();
         VaultRng live = rng.snapshot();
+        int match = NO_OFFSET;
         for (int offset = 0; offset < maxSearch; offset++) {
+            if (!normalizeLoot(simulateVault(live).items()).equals(observations.getFirst())) continue;
+
             VaultRng probe = live.snapshot();
             boolean allMatch = true;
-            for (List<String> known : knownLoots) {
-                LootResult res = simulateVault(probe);
-                List<String> s1 = new ArrayList<>(res.items());
-                List<String> s2 = new ArrayList<>(known);
-                Collections.sort(s1);
-                Collections.sort(s2);
-                if (!s1.equals(s2)) {
+            for (int i = 1; i < observations.size(); i++) {
+                if (!normalizeLoot(simulateVault(probe).items()).equals(observations.get(i))) {
                     allMatch = false;
                     break;
                 }
             }
             if (allMatch) {
-                return offset;
+                if (match != NO_OFFSET) return AMBIGUOUS_OFFSET;
+                match = offset;
             }
-            simulateVault(live);
         }
-        return -1;
+        return match;
+    }
+
+    private static Map<String, Integer> normalizeLoot(List<String> items) {
+        Map<String, Integer> totals = new HashMap<>();
+        for (String original : items) {
+            String item = original.trim();
+            var stack = STACK.matcher(item);
+            if (stack.matches()) {
+                totals.merge(stack.group(1), Integer.parseInt(stack.group(2)), Integer::sum);
+                continue;
+            }
+            int bracket = item.indexOf('[');
+            if (bracket >= 0 && item.endsWith("]")) {
+                String[] enchantments = item.substring(bracket + 1, item.length() - 1).split(",\\s*");
+                Arrays.sort(enchantments);
+                item = item.substring(0, bracket + 1) + String.join(",", enchantments) + "]";
+            }
+            totals.merge(item, 1, Integer::sum);
+        }
+        return totals;
     }
 
     /** Parses known-loot file: one line per vault, SEMICOLON-separated items, in opening order. */
@@ -458,62 +439,33 @@ public final class OminousVaultPredictor {
         return out;
     }
 
-    /** Holds the FOUR per-table random sequences consumed by one vault open. */
+    /** Holds the root loot table's random sequence. */
     static final class VaultRng {
         Xoroshiro128PlusPlus root;
-        Xoroshiro128PlusPlus rare;
-        Xoroshiro128PlusPlus common;
-        Xoroshiro128PlusPlus unique;
 
-        private VaultRng(Xoroshiro128PlusPlus root, Xoroshiro128PlusPlus rare,
-                         Xoroshiro128PlusPlus common, Xoroshiro128PlusPlus unique) {
+        private VaultRng(Xoroshiro128PlusPlus root) {
             this.root = root;
-            this.rare = rare;
-            this.common = common;
-            this.unique = unique;
         }
 
         static VaultRng fromSeed(long worldSeed) {
-            return new VaultRng(
-                    mk(initialState(worldSeed, SEQ_ROOT)),
-                    mk(initialState(worldSeed, SEQ_RARE)),
-                    mk(initialState(worldSeed, SEQ_COMMON)),
-                    mk(initialState(worldSeed, SEQ_UNIQUE)));
-        }
-
-        private static Xoroshiro128PlusPlus mk(RandomState s) {
-            return new Xoroshiro128PlusPlus(s.lo(), s.hi());
+            RandomState state = initialState(worldSeed);
+            return new VaultRng(new Xoroshiro128PlusPlus(state.lo(), state.hi()));
         }
 
         VaultRng snapshot() {
-            return new VaultRng(new Xoroshiro128PlusPlus(root.lo, root.hi),
-                                new Xoroshiro128PlusPlus(rare.lo, rare.hi),
-                                new Xoroshiro128PlusPlus(common.lo, common.hi),
-                                new Xoroshiro128PlusPlus(unique.lo, unique.hi));
+            return new VaultRng(new Xoroshiro128PlusPlus(root.lo, root.hi));
         }
 
         String dumpState() {
-            return String.format(
-                    "  Root   lo=0x%016X hi=0x%016X%n" +
-                    "  Rare   lo=0x%016X hi=0x%016X%n" +
-                    "  Common lo=0x%016X hi=0x%016X%n" +
-                    "  Unique lo=0x%016X hi=0x%016X%n",
-                    root.lo, root.hi, rare.lo, rare.hi,
-                    common.lo, common.hi, unique.lo, unique.hi);
+            return String.format("  Root lo=0x%016X hi=0x%016X%n", root.lo, root.hi);
         }
 
         static void save(File f, VaultRng rng) throws IOException {
             Properties p = new Properties();
             p.setProperty("root.lo", String.format("%016X", rng.root.lo));
             p.setProperty("root.hi", String.format("%016X", rng.root.hi));
-            p.setProperty("rare.lo", String.format("%016X", rng.rare.lo));
-            p.setProperty("rare.hi", String.format("%016X", rng.rare.hi));
-            p.setProperty("common.lo", String.format("%016X", rng.common.lo));
-            p.setProperty("common.hi", String.format("%016X", rng.common.hi));
-            p.setProperty("unique.lo", String.format("%016X", rng.unique.lo));
-            p.setProperty("unique.hi", String.format("%016X", rng.unique.hi));
             try (Writer w = new OutputStreamWriter(new FileOutputStream(f), StandardCharsets.UTF_8)) {
-                p.store(w, "OminousVaultPredictor four-stream state");
+                p.store(w, "OminousVaultPredictor vault sequence state");
             }
         }
 
@@ -522,21 +474,16 @@ public final class OminousVaultPredictor {
             try (Reader r = new InputStreamReader(new FileInputStream(f), StandardCharsets.UTF_8)) {
                 p.load(r);
             }
-            return new VaultRng(
-                    fromHex(p, "root"),
-                    fromHex(p, "rare"),
-                    fromHex(p, "common"),
-                    fromHex(p, "unique"));
-        }
-
-        private static Xoroshiro128PlusPlus fromHex(Properties p, String name) {
-            String lo = p.getProperty(name + ".lo");
-            String hi = p.getProperty(name + ".hi");
-            if (lo == null || hi == null) {
-                throw new IllegalArgumentException("state file missing " + name + " stream");
+            if (p.containsKey("rare.lo") || p.containsKey("common.lo") || p.containsKey("unique.lo")) {
+                throw new IllegalArgumentException("Obsolete state file. Replay from --seed and your vault history.");
             }
-            return new Xoroshiro128PlusPlus(Long.parseUnsignedLong(lo.trim(), 16),
-                                            Long.parseUnsignedLong(hi.trim(), 16));
+            String lo = p.getProperty("root.lo");
+            String hi = p.getProperty("root.hi");
+            if (lo == null || hi == null) {
+                throw new IllegalArgumentException("State file missing root.lo or root.hi");
+            }
+            return new VaultRng(new Xoroshiro128PlusPlus(Long.parseUnsignedLong(lo.trim(), 16),
+                                                       Long.parseUnsignedLong(hi.trim(), 16)));
         }
     }
 
@@ -611,35 +558,35 @@ public final class OminousVaultPredictor {
     private static final EnchantDef ENCH_DENSITY =
             new EnchantDef("density", 2, 1, 5, 5, 8, 25, 8, "damage");
 
-    // Tag #minecraft:on_random_loot resolved for the three enchanted rare items.
+    // Tag #minecraft:on_random_loot in vanilla tag order, filtered by primary item.
     private static final EnchantDef[] CROSSBOW_POOL = {
-            new EnchantDef("mending", 2, 1, 1, 25, 25, 75, 25, null),
-            new EnchantDef("multishot", 2, 1, 1, 20, 0, 50, 0, "crossbow"),
-            new EnchantDef("piercing", 10, 1, 4, 1, 10, 50, 0, "crossbow"),
-            new EnchantDef("quick_charge", 5, 1, 3, 12, 20, 50, 0, null),
             new EnchantDef("unbreaking", 5, 1, 3, 5, 8, 55, 8, null),
-            new EnchantDef("vanishing_curse", 1, 1, 1, 25, 0, 50, 0, null)
+            ENCH_MULTISHOT,
+            new EnchantDef("quick_charge", 5, 1, 3, 12, 20, 50, 0, null),
+            new EnchantDef("piercing", 10, 1, 4, 1, 10, 50, 0, "crossbow"),
+            new EnchantDef("vanishing_curse", 1, 1, 1, 25, 0, 50, 0, null),
+            new EnchantDef("mending", 2, 1, 1, 25, 25, 75, 25, null)
     };
 
     private static final EnchantDef[] DIAMOND_AXE_POOL = {
             new EnchantDef("efficiency", 10, 1, 5, 1, 10, 51, 10, null),
-            new EnchantDef("fortune", 2, 1, 3, 15, 9, 65, 9, "mining"),
-            new EnchantDef("mending", 2, 1, 1, 25, 25, 75, 25, null),
             new EnchantDef("silk_touch", 1, 1, 1, 15, 0, 65, 0, "mining"),
             new EnchantDef("unbreaking", 5, 1, 3, 5, 8, 55, 8, null),
-            new EnchantDef("vanishing_curse", 1, 1, 1, 25, 0, 50, 0, null)
+            new EnchantDef("fortune", 2, 1, 3, 15, 9, 65, 9, "mining"),
+            new EnchantDef("vanishing_curse", 1, 1, 1, 25, 0, 50, 0, null),
+            new EnchantDef("mending", 2, 1, 1, 25, 25, 75, 25, null)
     };
 
     private static final EnchantDef[] DIAMOND_CHESTPLATE_POOL = {
-            new EnchantDef("binding_curse", 1, 1, 1, 25, 0, 50, 0, null),
-            new EnchantDef("blast_protection", 2, 1, 4, 5, 8, 13, 8, "armor"),
-            new EnchantDef("fire_protection", 5, 1, 4, 10, 8, 18, 8, "armor"),
-            new EnchantDef("mending", 2, 1, 1, 25, 25, 75, 25, null),
-            new EnchantDef("projectile_protection", 5, 1, 4, 3, 6, 9, 6, "armor"),
             new EnchantDef("protection", 10, 1, 4, 1, 11, 12, 11, "armor"),
+            new EnchantDef("fire_protection", 5, 1, 4, 10, 8, 18, 8, "armor"),
+            new EnchantDef("blast_protection", 2, 1, 4, 5, 8, 13, 8, "armor"),
+            new EnchantDef("projectile_protection", 5, 1, 4, 3, 6, 9, 6, "armor"),
             new EnchantDef("thorns", 1, 1, 3, 10, 20, 60, 20, null),
             new EnchantDef("unbreaking", 5, 1, 3, 5, 8, 55, 8, null),
-            new EnchantDef("vanishing_curse", 1, 1, 1, 25, 0, 50, 0, null)
+            new EnchantDef("binding_curse", 1, 1, 1, 25, 0, 50, 0, null),
+            new EnchantDef("vanishing_curse", 1, 1, 1, 25, 0, 50, 0, null),
+            new EnchantDef("mending", 2, 1, 1, 25, 25, 75, 25, null)
     };
 
     private static final class Args {
@@ -711,12 +658,12 @@ public final class OminousVaultPredictor {
             System.out.println("Usage:");
             System.out.println("  java OminousVaultPredictor --seed 123456789");
             System.out.println("  java OminousVaultPredictor --seed S --vault-file vaults.txt [--save-state st.props]");
-            System.out.println("  java OminousVaultPredictor --state-file st.props [...]   # full four-stream resume");
+            System.out.println("  java OminousVaultPredictor --state-file st.props [...]");
             System.out.println("  java OminousVaultPredictor --seed S --known-loot-file known.txt [--max-search N] [--save-state st.props]");
             System.out.println("      known.txt: one line per vault YOU opened, exact chronological order,");
             System.out.println("      items SEMICOLON-separated (commas appear inside enchant lists),");
             System.out.println("      in this tool's own item format (see --vault-file output).");
-            System.out.println("  optional: --skip-vaults N; --state-lo/--state-hi = ROOT-stream-only debug override");
+            System.out.println("  optional: --skip-vaults N; --state-lo/--state-hi = sequence state override");
         }
     }
 }
